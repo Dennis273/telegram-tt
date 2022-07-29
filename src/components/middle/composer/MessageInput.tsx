@@ -13,7 +13,7 @@ import { debounce } from '../../../util/schedulers';
 import focusEditableElement from '../../../util/focusEditableElement';
 import buildClassName from '../../../util/buildClassName';
 import {
-  IS_ANDROID, IS_EMOJI_SUPPORTED, IS_IOS, IS_SINGLE_COLUMN_LAYOUT, IS_TOUCH_ENV,
+  IS_ANDROID, IS_EMOJI_SUPPORTED, IS_IOS, IS_SAFARI, IS_SINGLE_COLUMN_LAYOUT, IS_TOUCH_ENV,
 } from '../../../util/environment';
 import captureKeyboardListeners from '../../../util/captureKeyboardListeners';
 import useLayoutEffectWithPrevDeps from '../../../hooks/useLayoutEffectWithPrevDeps';
@@ -108,6 +108,7 @@ const MessageInput: FC<OwnProps & StateProps> = ({
   const selectionTimeoutRef = useRef<number>(null);
   // eslint-disable-next-line no-null/no-null
   const cloneRef = useRef<HTMLDivElement>(null);
+  const isCompositionFinished = useRef<boolean>(false);
 
   const lang = useLang();
   const isContextMenuOpenRef = useRef(false);
@@ -247,6 +248,14 @@ const MessageInput: FC<OwnProps & StateProps> = ({
     document.addEventListener('keydown', handleCloseContextMenu);
   }
 
+  function handleCompositionStart() {
+    isCompositionFinished.current = false;
+  }
+  
+  function handleCompositionEnd() {
+    isCompositionFinished.current = true;
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (!html.length && (e.metaKey || e.ctrlKey)) {
       const targetIndexDelta = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : undefined;
@@ -257,8 +266,29 @@ const MessageInput: FC<OwnProps & StateProps> = ({
         return;
       }
     }
+    /**
+     * `isComposing` on `KeyboardEvent` has not yet been added to React type defination.
+     * @see https://github.com/facebook/react/issues/13104
+     */
+    let isComposing = (e as React.KeyboardEvent<HTMLDivElement> & { isComposing?: boolean }).isComposing ?? false;
+    console.log(IS_SAFARI, 'adfasdfa')
+    /**
+     * In Safari, `keydown` event is fired *after* `compositionend`, so we need this extra flag to
+     * igore `Enter` command right after `compositionend` event.
+     * @see https://blog.utgw.net/entry/2021/06/29/212256
+     */
+    if (IS_SAFARI && isCompositionFinished.current) {
+      console.log('afaf', isCompositionFinished.current)
+      isCompositionFinished.current = false;
+      isComposing = true;
+    }
 
-    if (e.key === 'Enter' && !e.shiftKey) {
+    /**
+     * Check composition status when processing `Enter` command.
+     * This fix the problem that users using IMEs may accidentally send messages when trying to select
+     * from IME results.
+     */
+    if (!isComposing && e.key === 'Enter' && !e.shiftKey) {
       if (
         !(IS_IOS || IS_ANDROID)
         && (
@@ -395,6 +425,8 @@ const MessageInput: FC<OwnProps & StateProps> = ({
         onClick={focusInput}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
         onMouseDown={handleMouseDown}
         onContextMenu={IS_ANDROID ? stopEvent : undefined}
         onTouchCancel={IS_ANDROID ? processSelectionWithTimeout : undefined}
